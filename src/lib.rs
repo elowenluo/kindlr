@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fs;
 
+pub mod parser;
+
 pub struct Config {
     pub file_path: String,
     pub command: String,
@@ -28,7 +30,7 @@ pub fn read_clippings(config: Config) -> Result<(), Box<dyn Error>> {
     match fs::read_to_string(config.file_path) {
         Ok(contents) => {
             // println!("Clippings: \n{}", contents);
-            parse_clippings(contents);
+            parser::parse_clippings(&contents);
         }
         Err(error) => {
             eprintln!("Error to read file{}", error);
@@ -37,14 +39,3 @@ pub fn read_clippings(config: Config) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-
-fn parse_clippings(contents: String) {
-    let clippings: Vec<&str> = contents.split("==========").collect();
-
-    for clipping in clippings {
-        println!("{}", clipping)
-    }
-}
-
-#[cfg(test)]
-mod tests {}
