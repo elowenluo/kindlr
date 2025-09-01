@@ -1,8 +1,31 @@
 use regex::Regex;
+use std::error::Error;
+use std::fmt;
 use std::str::FromStr;
 
+/// Parse errors
+#[derive(Debug)]
+pub enum ParseError {
+    InvalidFormat(String),
+    MissingField(String),
+    InvalidWeekday(String),
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
+            ParseError::MissingField(field) => write!(f, "Missing field: {}", field),
+            ParseError::InvalidWeekday(day) => write!(f, "Invalid weekday: {}", day),
+        }
+    }
+}
+
+impl Error for ParseError {}
+
+/// Days of the week
 #[derive(Debug, PartialEq)]
-enum Weekday {
+pub enum Weekday {
     Monday,
     Tuesday,
     Wednesday,
@@ -10,6 +33,12 @@ enum Weekday {
     Friday,
     Saturday,
     Sunday,
+}
+
+impl fmt::Display for Weekday {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl FromStr for Weekday {
@@ -29,54 +58,52 @@ impl FromStr for Weekday {
     }
 }
 
+/// A single Kindle clipping
 #[derive(Debug)]
-struct Clipping {
-    book_title: String,
-    author: String,
-    location: String,
-    datetime: String,
-    weekday: Weekday,
-    content: String,
+pub struct Clipping {
+    pub book_title: String,
+    pub author: String,
+    pub location: String,
+    pub datetime: String,
+    pub weekday: Weekday,
+    pub content: String,
+}
+
+impl fmt::Display for Clipping {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Book: {}\nAuthor: {}\nLocation: {}\nDate: {} ({})\nContent: {}",
+            self.book_title, self.author, self.location, self.datetime, self.weekday, self.content
+        )
+    }
 }
 
 impl Clipping {
-    pub fn build(clipping: &str) -> Result<Self, String> {
-        let mut clipping_iterator = clipping.lines().filter(|line| !line.trim().is_empty());
+    /// Parse a single clipping from text
+    pub fn from_text(text: &str) -> Result<Self, ParseError> {
+        let mut lines = text.lines().filter(|line| !line.trim().is_empty());
 
-        let re = Regex::new(r"^(.+?)\s+\((.+)\)$").unwrap();
-        let first_line = clipping_iterator.next().unwrap();
+        // Parse first line: book title and author
+        let first_line = lines
+            .next()
+            .ok_or_else(|| ParseError::MissingField("book title and author".to_string()))?;
 
-        let mut book_title = String::new();
-        let mut author = String::new();
+        let (book_title, author) = Self::parse_title_and_author(first_line)?;
 
-        if let Some(captures) = re.captures(first_line) {
-            book_title = captures[1].to_string();
-            author = captures[2].to_string();
-        } else {
-            eprintln!("Failed to parse clipping");
-        }
+        // Parse second line: metadata
+        let second_line = lines
+            .next()
+            .ok_or_else(|| ParseError::MissingField("metadata".to_string()))?;
 
-        let second_line = clipping_iterator.next().unwrap();
-        let re = Regex::new(r"Location\s+(\d+-\d+)\s+\|\s+Added on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})").unwrap();
-        let mut location = String::new();
-        let mut datetime = String::new();
-        let mut weekday_str = String::new();
+        let (location, weekday, datetime) = Self::parse_metadata(second_line)?;
 
-        if let Some(captures) = re.captures(second_line) {
-            location = captures[1].to_string();
-            weekday_str = captures[2].to_string();
-            datetime = captures[3].to_string();
-        } else {
-            eprintln!("Failed to parse clipping");
-        }
+        // Parse content
+        let content = lines
+            .next()
+            .ok_or_else(|| ParseError::MissingField("content".to_string()))?
+            .to_string();
 
-        let weekday = weekday_str
-            .parse::<Weekday>()
-            .map_err(|e| format!("Failed to parse weekday: {}", e))?;
-
-        let content = clipping_iterator.next().unwrap().to_string();
-
-        // 需要返回 Clipping 实例
         Ok(Self {
             book_title,
             author,
@@ -86,18 +113,57 @@ impl Clipping {
             content,
         })
     }
+
+    fn parse_title_and_author(line: &str) -> Result<(String, String), ParseError> {
+        // Match pattern: "Title (Author)"
+        let re = Regex::new(r"^(.+?)\s+\((.+)\)$").unwrap();
+
+        re.captures(line)
+            .map(|caps| (caps[1].trim().to_string(), caps[2].trim().to_string()))
+            .ok_or_else(|| {
+                ParseError::InvalidFormat(format!(
+                    "Expected 'Title (Author)' format, got: {}",
+                    line
+                ))
+            })
+    }
+
+    fn parse_metadata(line: &str) -> Result<(String, Weekday, String), ParseError> {
+        // Match location, weekday and datetime
+        let re = Regex::new(r"Location\s+(\d+-\d+)\s+\|\s+Added on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})").unwrap();
+
+        re.captures(line)
+            .ok_or_else(|| {
+                ParseError::InvalidFormat(format!("Cannot parse metadata line: {}", line))
+            })
+            .and_then(|caps| {
+                let location = caps[1].to_string();
+                let weekday = caps[2].parse().map_err(|error| {
+                    ParseError::InvalidFormat(format!("Invalid weekday: {}", error))
+                })?;
+                let datetime = caps[3].to_string();
+                Ok((location, weekday, datetime))
+            })
+    }
 }
 
-pub fn parse_clippings(contents: &str) {
-    let clippings_str: Vec<&str> = contents.split("==========").collect();
+pub fn parse_clippings(contents: &str) -> Result<Vec<Clipping>, ParseError> {
+    const SEPARATOR: &str = "==========";
 
-    let clippings: Vec<Clipping> = clippings_str
-        .iter()
-        .filter(|clipping| !clipping.trim().is_empty())
-        .map(|clipping| Clipping::build(clipping).unwrap())
-        .collect();
-
-    println!("{:?}", clippings);
+    contents
+        .split(SEPARATOR)
+        .filter(|text| !text.trim().is_empty())
+        .enumerate()
+        .map(|(index, text)| {
+            Clipping::from_text(text).map_err(|error| {
+                ParseError::InvalidFormat(format!(
+                    "Failed to parse clipping #{}: {}",
+                    index + 1,
+                    error
+                ))
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -105,14 +171,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_clipping_information_parsing() {
+    fn test_weekday_parsing() {
+        assert_eq!("Monday".parse::<Weekday>().unwrap(), Weekday::Monday);
+        assert_eq!("Sunday".parse::<Weekday>().unwrap(), Weekday::Sunday);
+        assert!("InvalidDay".parse::<Weekday>().is_err());
+    }
+
+    #[test]
+    fn test_clipping_parsing() {
         let clipping = "\
 一无所有 ([美] Ursula K. Le Guin 著 (陶雪蕾 译))
 - Your Highlight on page 314 | Location 5134-5134 | Added on Tuesday, 26 August 2025 12:57:30
 
 时间没有虚度，痛苦自有其价值。";
 
-        let result = Clipping::build(clipping).unwrap();
+        let result = Clipping::from_text(clipping).unwrap();
 
         assert_eq!(result.book_title, "一无所有");
         assert_eq!(result.author, "[美] Ursula K. Le Guin 著 (陶雪蕾 译)");
@@ -120,5 +193,14 @@ mod tests {
         assert_eq!(result.datetime, "26 August 2025 12:57:30");
         assert_eq!(result.weekday, Weekday::Tuesday);
         assert_eq!(result.content, "时间没有虚度，痛苦自有其价值。");
+    }
+
+    #[test]
+    fn test_missing_content() {
+        let clipping = "\
+Book (Author)
+Location 123 | Added on Monday, 1 January 2025 10:00:00";
+
+        assert!(Clipping::from_text(clipping).is_err());
     }
 }
