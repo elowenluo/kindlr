@@ -97,15 +97,21 @@ pub struct Clipping {
     pub location: String,
     pub datetime: String,
     pub weekday: Weekday,
-    pub content: String,
+    pub content: Option<String>,
 }
 
 impl fmt::Display for Clipping {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Book: {}\nAuthor: {}\nLocation: {}\nDate: {} ({})\nContent: {}",
-            self.book_title, self.author, self.location, self.datetime, self.weekday, self.content
+            "Book: {}\nAuthor: {}\nLocation: {}\nDate: {} ({})\nPage: {}\nContent: {}",
+            self.book_title,
+            self.author,
+            self.location,
+            self.datetime,
+            self.weekday,
+            self.page.map_or("N/A".to_string(), |p| p.to_string()),
+            self.content.as_deref().unwrap_or("N/A")
         )
     }
 }
@@ -133,10 +139,16 @@ impl Clipping {
         let datetime = Self::parse_datetime(second_line)?;
 
         // Parse content
-        let content = lines
-            .next()
-            .ok_or_else(|| ParseError::MissingField("content".to_string()))?
-            .to_string();
+        let content = if clipping_type == ClippingType::Bookmark {
+            None
+        } else {
+            Some(
+                lines
+                    .next()
+                    .ok_or_else(|| ParseError::MissingField("content".to_string()))?
+                    .to_string(),
+            )
+        };
 
         Ok(Self {
             clipping_type,
@@ -342,24 +354,52 @@ mod tests {
     }
 
     #[test]
-    fn test_clipping_parsing() {
-        let clipping = "\
-一无所有 ([美] Ursula K. Le Guin 著 (陶雪蕾 译))
-- Your Highlight on page 314 | Location 5134-5134 | Added on Tuesday, 26 August 2025 12:57:30
+    fn test_clipping_parsing_en() {
+        // Highlight
+        let highlight = "\
+Book Title (Author Name)
+- Your Highlight on page 123 | Location 1234-1235 | Added on Monday, 26 August 2025 12:57:30
 
-时间没有虚度，痛苦自有其价值。";
+Highlighted text content goes here.";
 
-        let result = Clipping::from_text(clipping).unwrap();
-        let page = result.page.unwrap();
+        let result = Clipping::from_text(highlight).unwrap();
 
         assert_eq!(result.clipping_type, ClippingType::Highlight);
-        assert_eq!(result.book_title, "一无所有");
-        assert_eq!(result.author, "[美] Ursula K. Le Guin 著 (陶雪蕾 译)");
-        assert_eq!(page, 314);
-        assert_eq!(result.location, "5134-5134");
+        assert_eq!(result.book_title, "Book Title");
+        assert_eq!(result.author, "Author Name");
+        assert_eq!(result.page, Some(123));
+        assert_eq!(result.location, "1234-1235");
         assert_eq!(result.datetime, "26 August 2025 12:57:30");
-        assert_eq!(result.weekday, Weekday::Tuesday);
-        assert_eq!(result.content, "时间没有虚度，痛苦自有其价值。");
+        assert_eq!(result.weekday, Weekday::Monday);
+        assert_eq!(
+            result.content,
+            Some(format!("Highlighted text content goes here."))
+        );
+
+        // Bookmark
+        let bookmark = "\
+Book Title (Author Name)
+- Your Bookmark on page 123 | Location 1234 | Added on Monday, 26 August 2025 12:57:30
+
+";
+        let result = Clipping::from_text(bookmark).unwrap();
+
+        assert_eq!(result.clipping_type, ClippingType::Bookmark);
+        assert_eq!(result.content, None);
+
+        // Note
+        let note = "\
+Book Title (Author Name)
+- Your Note on page 123 | Location 1234 | Added on Monday, 26 August 2025 12:57:30
+
+Your note content goes here.";
+        let result = Clipping::from_text(note).unwrap();
+
+        assert_eq!(result.clipping_type, ClippingType::Note);
+        assert_eq!(
+            result.content,
+            Some(format!("Your note content goes here."))
+        );
     }
 
     #[test]
