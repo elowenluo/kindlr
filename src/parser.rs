@@ -96,7 +96,9 @@ impl Clipping {
             .next()
             .ok_or_else(|| ParseError::MissingField("metadata".to_string()))?;
 
-        let (location, weekday, datetime) = Self::parse_metadata(second_line)?;
+        let (page, location) = Self::parse_page_and_location(second_line)?;
+        let weekday = Self::parse_weekday(second_line)?;
+        let datetime = Self::parse_datetime(second_line)?;
 
         // Parse content
         let content = lines
@@ -128,21 +130,110 @@ impl Clipping {
             })
     }
 
-    fn parse_metadata(line: &str) -> Result<(String, Weekday, String), ParseError> {
-        // Match location, weekday and datetime
-        let re = Regex::new(r"Location\s+(\d+-\d+)\s+\|\s+Added on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})").unwrap();
+    fn parse_page_and_location(line: &str) -> Result<(Option<u32>, String), ParseError> {
+        let patterns = vec![
+            // en
+            r"page (\d+) \| Location (\d+-\d+)",
+            r"page (\d+) \| Location (\d+)",
+            r"Location (\d+-\d+)",
+            r"Location (\d+)",
+            // support more languages...
+        ];
 
-        re.captures(line)
-            .ok_or_else(|| {
-                ParseError::InvalidFormat(format!("Cannot parse metadata line: {}", line))
+        patterns
+            .iter()
+            .find_map(|pattern| {
+                let re = Regex::new(pattern).unwrap();
+                if let Some(caps) = re.captures(line) {
+                    match caps.len() {
+                        3 => {
+                            // have page
+                            let page: u32 = caps[1]
+                                .parse()
+                                .map_err(|error| {
+                                    ParseError::InvalidFormat(format!("Invalid page: {}", error))
+                                })
+                                .ok()?;
+                            let location = caps[2].to_string();
+                            Some(Ok((Some(page), location)))
+                        }
+                        2 => {
+                            let location = caps[1].to_string();
+                            Some(Ok((None, location)))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
             })
-            .and_then(|caps| {
-                let location = caps[1].to_string();
-                let weekday = caps[2].parse().map_err(|error| {
-                    ParseError::InvalidFormat(format!("Invalid weekday: {}", error))
-                })?;
-                let datetime = caps[3].to_string();
-                Ok((location, weekday, datetime))
+            .unwrap_or_else(|| {
+                Err(ParseError::InvalidFormat(format!(
+                    "Failed to parse page and location: {}",
+                    line
+                )))
+            })
+    }
+
+    fn parse_weekday(line: &str) -> Result<Weekday, ParseError> {
+        let patterns = vec![
+            // en
+            r"Added on (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)", // support more languages...
+        ];
+
+        patterns
+            .iter()
+            .find_map(|pattern| {
+                let re = Regex::new(pattern).unwrap();
+                if let Some(caps) = re.captures(line) {
+                    if caps.len() == 2 {
+                        let weekday: Weekday = caps[1]
+                            .parse()
+                            .map_err(|error| {
+                                ParseError::InvalidFormat(format!("Invalid weekday: {}", error))
+                            })
+                            .ok()?;
+                        Some(Ok(weekday))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                Err(ParseError::InvalidFormat(format!(
+                    "Failed to parse weekday: {}",
+                    line
+                )))
+            })
+    }
+
+    fn parse_datetime(line: &str) -> Result<String, ParseError> {
+        let patterns = vec![
+            r"(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})",
+        ];
+
+        patterns
+            .iter()
+            .find_map(|pattern| {
+                let re = Regex::new(pattern).unwrap();
+                if let Some(caps) = re.captures(line) {
+                    if caps.len() == 2 {
+                        let datetime = caps[1].to_string();
+                        Some(Ok(datetime))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                Err(ParseError::InvalidFormat(format!(
+                    "Failed to parse datetime: {}",
+                    line
+                )))
             })
     }
 }
