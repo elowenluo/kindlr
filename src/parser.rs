@@ -23,6 +23,35 @@ impl fmt::Display for ParseError {
 
 impl Error for ParseError {}
 
+// Clipping type
+#[derive(Debug, PartialEq)]
+pub enum ClippingType {
+    Highlight,
+    Note,
+    Bookmark,
+}
+
+impl fmt::Display for ClippingType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl FromStr for ClippingType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            // en
+            "Highlight" => Ok(ClippingType::Highlight),
+            "Note" => Ok(ClippingType::Note),
+            "Bookmark" => Ok(ClippingType::Bookmark),
+            // support more languages...
+            _ => Err(format!("Invalid clipping type: {}", s)),
+        }
+    }
+}
+
 /// Days of the week
 #[derive(Debug, PartialEq)]
 pub enum Weekday {
@@ -61,8 +90,10 @@ impl FromStr for Weekday {
 /// A single Kindle clipping
 #[derive(Debug)]
 pub struct Clipping {
+    pub clipping_type: ClippingType,
     pub book_title: String,
     pub author: String,
+    pub page: Option<u32>,
     pub location: String,
     pub datetime: String,
     pub weekday: Weekday,
@@ -96,6 +127,7 @@ impl Clipping {
             .next()
             .ok_or_else(|| ParseError::MissingField("metadata".to_string()))?;
 
+        let clipping_type = Self::parse_type(second_line)?;
         let (page, location) = Self::parse_page_and_location(second_line)?;
         let weekday = Self::parse_weekday(second_line)?;
         let datetime = Self::parse_datetime(second_line)?;
@@ -107,8 +139,10 @@ impl Clipping {
             .to_string();
 
         Ok(Self {
+            clipping_type,
             book_title,
             author,
+            page,
             location,
             datetime,
             weekday,
@@ -127,6 +161,45 @@ impl Clipping {
                     "Expected 'Title (Author)' format, got: {}",
                     line
                 ))
+            })
+    }
+
+    fn parse_type(line: &str) -> Result<ClippingType, ParseError> {
+        let patterns = vec![
+            // en
+            r"(Bookmark|Highlight|Note)",
+            // support more languages...
+        ];
+
+        patterns
+            .iter()
+            .find_map(|pattern| {
+                let re = Regex::new(pattern).unwrap();
+                if let Some(caps) = re.captures(line) {
+                    if caps.len() == 2 {
+                        let clipping_type: ClippingType = caps[1]
+                            .parse()
+                            .map_err(|error| {
+                                ParseError::InvalidFormat(format!(
+                                    "Invalid clipping type: {}",
+                                    error
+                                ))
+                            })
+                            .ok()?;
+
+                        Some(Ok(clipping_type))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                Err(ParseError::InvalidFormat(format!(
+                    "Failed to parse clipping type: {}",
+                    line
+                )))
             })
     }
 
@@ -277,9 +350,12 @@ mod tests {
 时间没有虚度，痛苦自有其价值。";
 
         let result = Clipping::from_text(clipping).unwrap();
+        let page = result.page.unwrap();
 
+        assert_eq!(result.clipping_type, ClippingType::Highlight);
         assert_eq!(result.book_title, "一无所有");
         assert_eq!(result.author, "[美] Ursula K. Le Guin 著 (陶雪蕾 译)");
+        assert_eq!(page, 314);
         assert_eq!(result.location, "5134-5134");
         assert_eq!(result.datetime, "26 August 2025 12:57:30");
         assert_eq!(result.weekday, Weekday::Tuesday);
