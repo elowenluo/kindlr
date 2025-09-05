@@ -3,6 +3,8 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
+const SEPARATOR: &str = "==========";
+
 /// Parse errors
 #[derive(Debug)]
 pub enum ParseError {
@@ -52,6 +54,26 @@ impl FromStr for ClippingType {
     }
 }
 
+/// Location
+#[derive(Debug, PartialEq)]
+pub struct Location {
+    pub start: u32,
+    pub end: Option<u32>,
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.end {
+            Some(end) => {
+                write!(f, "{}-{}", self.start, end)
+            }
+            None => {
+                write!(f, "{}", self.start)
+            }
+        }
+    }
+}
+
 /// Days of the week
 #[derive(Debug, PartialEq)]
 pub enum Weekday {
@@ -94,7 +116,7 @@ pub struct Clipping {
     pub book_title: String,
     pub author: String,
     pub page: Option<u32>,
-    pub location: String,
+    pub location: Location,
     pub datetime: String,
     pub weekday: Weekday,
     pub content: Option<String>,
@@ -134,7 +156,8 @@ impl Clipping {
             .ok_or_else(|| ParseError::MissingField("metadata".to_string()))?;
 
         let clipping_type = Self::parse_type(second_line)?;
-        let (page, location) = Self::parse_page_and_location(second_line)?;
+        let page = Self::parse_page(second_line)?;
+        let location = Self::parse_location(second_line)?;
         let weekday = Self::parse_weekday(second_line)?;
         let datetime = Self::parse_datetime(second_line)?;
 
@@ -215,12 +238,45 @@ impl Clipping {
             })
     }
 
-    fn parse_page_and_location(line: &str) -> Result<(Option<u32>, String), ParseError> {
+    fn parse_page(line: &str) -> Result<Option<u32>, ParseError> {
         let patterns = vec![
             // en
-            r"page (\d+) \| Location (\d+-\d+)",
-            r"page (\d+) \| Location (\d+)",
-            r"Location (\d+-\d+)",
+            r"page (\d+)",
+            // support more languages...
+        ];
+
+        patterns
+            .iter()
+            .find_map(|pattern| {
+                let re = Regex::new(pattern).unwrap();
+                if let Some(caps) = re.captures(line) {
+                    if caps.len() == 2 {
+                        let page: u32 = caps[1]
+                            .parse()
+                            .map_err(|error| {
+                                ParseError::InvalidFormat(format!("Invalid page: {}", error))
+                            })
+                            .unwrap();
+                        Some(Ok(Some(page)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                Err(ParseError::InvalidFormat(format!(
+                    "Failed to parse page: {}",
+                    line
+                )))
+            })
+    }
+
+    fn parse_location(line: &str) -> Result<Location, ParseError> {
+        let patterns = vec![
+            // en
+            r"Location (\d+)-(\d+)",
             r"Location (\d+)",
             // support more languages...
         ];
@@ -232,19 +288,40 @@ impl Clipping {
                 if let Some(caps) = re.captures(line) {
                     match caps.len() {
                         3 => {
-                            // have page
-                            let page: u32 = caps[1]
+                            let start: u32 = caps[1]
                                 .parse()
                                 .map_err(|error| {
-                                    ParseError::InvalidFormat(format!("Invalid page: {}", error))
+                                    ParseError::InvalidFormat(format!(
+                                        "Invalid start location: {}",
+                                        error
+                                    ))
                                 })
-                                .ok()?;
-                            let location = caps[2].to_string();
-                            Some(Ok((Some(page), location)))
+                                .unwrap();
+                            let end: u32 = caps[2]
+                                .parse()
+                                .map_err(|error| {
+                                    ParseError::InvalidFormat(format!(
+                                        "Invalid end location: {}",
+                                        error
+                                    ))
+                                })
+                                .unwrap();
+                            Some(Ok(Location {
+                                start,
+                                end: Some(end),
+                            }))
                         }
                         2 => {
-                            let location = caps[1].to_string();
-                            Some(Ok((None, location)))
+                            let start: u32 = caps[1]
+                                .parse()
+                                .map_err(|error| {
+                                    ParseError::InvalidFormat(format!(
+                                        "Invalid start location: {}",
+                                        error
+                                    ))
+                                })
+                                .unwrap();
+                            Some(Ok(Location { start, end: None }))
                         }
                         _ => None,
                     }
@@ -254,7 +331,7 @@ impl Clipping {
             })
             .unwrap_or_else(|| {
                 Err(ParseError::InvalidFormat(format!(
-                    "Failed to parse page and location: {}",
+                    "Failed to parse location: {}",
                     line
                 )))
             })
@@ -324,8 +401,6 @@ impl Clipping {
 }
 
 pub fn parse_clippings(contents: &str) -> Result<Vec<Clipping>, ParseError> {
-    const SEPARATOR: &str = "==========";
-
     contents
         .split(SEPARATOR)
         .filter(|text| !text.trim().is_empty())
@@ -368,7 +443,13 @@ Highlighted text content goes here.";
         assert_eq!(result.book_title, "Book Title");
         assert_eq!(result.author, "Author Name");
         assert_eq!(result.page, Some(123));
-        assert_eq!(result.location, "1234-1235");
+        assert_eq!(
+            result.location,
+            Location {
+                start: 1234,
+                end: Some(1235)
+            }
+        );
         assert_eq!(result.datetime, "26 August 2025 12:57:30");
         assert_eq!(result.weekday, Weekday::Monday);
         assert_eq!(
@@ -386,6 +467,13 @@ Book Title (Author Name)
 
         assert_eq!(result.clipping_type, ClippingType::Bookmark);
         assert_eq!(result.content, None);
+        assert_eq!(
+            result.location,
+            Location {
+                start: 1234,
+                end: None
+            }
+        );
 
         // Note
         let note = "\
