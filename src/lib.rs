@@ -8,7 +8,7 @@ pub mod parser;
 #[derive(Debug)]
 pub enum KindlrError {
     Io(io::Error),
-    Parse(String),
+    Parse(parser::ParseError),
     Config(String),
 }
 
@@ -32,7 +32,7 @@ impl From<io::Error> for KindlrError {
 
 impl From<parser::ParseError> for KindlrError {
     fn from(err: parser::ParseError) -> Self {
-        KindlrError::Parse(err.to_string())
+        KindlrError::Parse(err)
     }
 }
 
